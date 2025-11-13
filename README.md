@@ -245,13 +245,9 @@ El flujo CI/CD está definido en .github/workflows/deploy.yml y automatiza la cr
 
 - Finalmente, se conecta a la instancia EC2 para ejecutar el contenedor con FastAPI y React.
 
- Frontend - Asisya Application
+# Frontend - Asisya Application
 
-## Documentación para Desarrolladores Backend
 
-Esta documentación está diseñada para ayudar a desarrolladores backend a entender la arquitectura y funcionamiento del frontend de la aplicación Asisya durante entrevistas técnicas o revisiones de código.
-
----
 
 ## 📋 Tabla de Contenidos
 

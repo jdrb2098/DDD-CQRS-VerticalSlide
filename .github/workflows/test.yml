@@ -1,0 +1,109 @@
+name: 🧪 Asisya API - Tests
+
+on:
+  pull_request:
+  push:
+    branches: [ main, develop ]
+
+jobs:
+  run-tests:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: asisya_user
+          POSTGRES_PASSWORD: asisya_pass
+          POSTGRES_DB: asisya_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U asisya_user -d asisya_db"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+      localstack:
+        image: localstack/localstack
+        env:
+          SERVICES: sqs,s3,lambda
+          AWS_DEFAULT_REGION: us-east-1
+        ports:
+          - 4566:4566
+
+    env:
+      # ==== App Config ====
+      API_VERSION: 0.0.1
+      DEBUG_MODE: true
+
+      # ==== Database ====
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_NAME: asisya_db
+      DB_USER: asisya_user
+      DB_PASSWORD: asisya_pass
+
+      # ==== Admin Account ====
+      INITIAL_ADMIN_USERNAME: admin
+      INITIAL_ADMIN_EMAIL: admin@admin.com
+      INITIAL_ADMIN_PASSWORD: 123456
+
+      # ==== JWT / Security ====
+      SECRET_KEY: your_secret
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: 60
+
+      # ==== SMTP ====
+      USE_SMTP: false
+      SMTP_SERVER: your.smtp.server.com
+      SMTP_PORT: 1234
+      SMTP_USERNAME: dummy_user
+      SMTP_PASSWORD: dummy_pass
+      SENDER_EMAIL: dummy_user
+
+      # === STORAGE MODE ===
+      STORAGE_BACKEND: local
+
+      # === AWS / LocalStack ===
+      AWS_S3_BUCKET: asisya-media
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      BULK_PRODUCTS_QUEUE_URL: http://localhost:4566/000000000000/bulk-products-queue
+      AWS_ENDPOINT_URL: http://localhost:4566
+      AWS_DEFAULT_REGION: us-east-1
+      PYTHONPATH: asisya_api
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.12
+
+      - name: 📦 Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install awscli pytest
+
+      - name: ☁️ Create LocalStack resources
+        run: |
+          aws --endpoint-url=http://localhost:4566 sqs create-queue --queue-name bulk-products-queue
+          aws --endpoint-url=http://localhost:4566 s3 mb s3://asisya-bucket || true
+
+          echo "def lambda_handler(event, context): print('Lambda mock')" > handler.py
+          zip lambda.zip handler.py
+
+          aws --endpoint-url=http://localhost:4566 lambda create-function \
+            --function-name processBulkProducts \
+            --runtime python3.12 \
+            --role arn:aws:iam::000000000000:role/lambda-role \
+            --handler handler.lambda_handler \
+            --zip-file fileb://lambda.zip || true
+
+      - name: 🧪 Run tests
+        run: pytest -v --disable-warnings

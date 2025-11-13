@@ -1,0 +1,96 @@
+version: "3.8"
+
+services:
+  asisya_api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: asisya_api
+    env_file:
+      - asisya_api/.env
+    ports:
+      - "8000:8000"
+      - "5678:5678"
+    volumes:
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      localstack:
+        condition: service_started
+    environment:
+      - DEBUG_MODE=true
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_NAME=asisya_db
+      - DB_USER=asisya_user
+      - DB_PASSWORD=asisya_pass
+      - DATABASE_URL=postgresql://asisya_user:asisya_pass@db:5432/asisya_db
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ENDPOINT_URL=http://localstack:4566
+    command: >
+      sh -c "
+        echo 'Esperando DB...' &&
+        until pg_isready -h db -p 5432 -U asisya_user; do sleep 2; done &&
+        echo 'Base de datos lista. Ejecutando migraciones...' &&
+        alembic -c asisya_api/infrastructure/alembic.ini upgrade head &&
+        echo 'Cargando datos iniciales...' &&
+        python -m asisya_api.infrastructure.seeds.seed_initial_data &&
+        echo 'Esperando LocalStack...' &&
+        until curl -s http://localstack:4566 > /dev/null; do sleep 2; done &&
+        echo 'Creando cola SQS en LocalStack...' &&
+        aws --endpoint-url=http://localstack:4566 sqs create-queue --queue-name bulk-products-queue &&
+        echo 'Iniciando aplicación FastAPI...' &&
+        python -m debugpy --listen 0.0.0.0:5678 -m uvicorn asisya_api.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+
+  db:
+    image: postgres:15
+    container_name: postgres_db
+    environment:
+      POSTGRES_DB: asisya_db
+      POSTGRES_USER: asisya_user
+      POSTGRES_PASSWORD: asisya_pass
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U asisya_user -d asisya_db"]
+      interval: 5s
+      retries: 5
+
+  localstack:
+    image: localstack/localstack
+    container_name: localstack
+    ports:
+      - "4566:4566"
+    environment:
+      - DEBUG=1
+      - SERVICES=sqs,lambda
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+    volumes:
+      - "./volume:/var/lib/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: asisya_frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - asisya_api
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+volumes:
+  postgres_data:

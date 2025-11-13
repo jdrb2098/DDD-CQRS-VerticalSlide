@@ -1,0 +1,89 @@
+name: ☁️ Asisya Cloud Deploy (AWS SAM)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy-cloud:
+    name: Deploy Infrastructure + Backend + Frontend
+    runs-on: ubuntu-latest
+
+    env:
+      AWS_REGION: us-east-1
+      STACK_NAME: asisya-api-stack
+      S3_BUCKET: asisya-api-artifacts
+      CLIENT: Asisya
+      DB_NAME: asisya_db
+      DB_USER: asisya_user
+      DB_PASSWORD: asisya_pass
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.12
+
+      - name: ☁️ Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: 🧰 Install AWS SAM CLI
+        run: |
+          pip install awscli aws-sam-cli
+
+      - name: 📦 Prepare deployment package
+        run: |
+          pip install -U . -t ./dist/python
+          sam build --region $AWS_REGION --build-dir .aws-sam/build
+
+      - name: ☁️ Package SAM template
+        run: |
+          aws s3 mb s3://$S3_BUCKET || true
+          sam package \
+            --template-file .aws-sam/build/template.yaml \
+            --output-template-file package.yaml \
+            --s3-bucket $S3_BUCKET
+
+      - name: 🚀 Deploy stack with IAM, RDS, S3, SQS, EC2
+        run: |
+          sam deploy \
+            --template-file package.yaml \
+            --stack-name $STACK_NAME \
+            --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND \
+            --region $AWS_REGION \
+            --parameter-overrides \
+              "ParameterKey=Client,ParameterValue=$CLIENT \
+               ParameterKey=DBName,ParameterValue=$DB_NAME \
+               ParameterKey=DBUser,ParameterValue=$DB_USER \
+               ParameterKey=DBPassword,ParameterValue=$DB_PASSWORD"
+
+      - name: ✅ Verify stack status
+        run: |
+          aws cloudformation describe-stacks --stack-name $STACK_NAME \
+            --query "Stacks[0].StackStatus"
+
+      - name: 📦 Build and push Docker image (Backend)
+        run: |
+          docker build -t asisya-api .
+          aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin ${{ secrets.AWS_ECR_URI }}
+          docker tag asisya-api:latest ${{ secrets.AWS_ECR_URI }}:latest
+          docker push ${{ secrets.AWS_ECR_URI }}:latest
+
+      - name: 💻 Deploy to EC2 (Backend + Frontend)
+        run: |
+          ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.AWS_EC2_PUBLIC_IP }} "
+            sudo docker pull ${{ secrets.AWS_ECR_URI }}:latest &&
+            sudo docker stop asisya_api || true &&
+            sudo docker rm asisya_api || true &&
+            sudo docker run -d -p 8000:8000 --name asisya_api ${{ secrets.AWS_ECR_URI }}:latest
+          "
+          echo "Backend desplegado exitosamente en EC2."

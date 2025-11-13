@@ -245,8 +245,45 @@ El flujo CI/CD está definido en .github/workflows/deploy.yml y automatiza la cr
 
 - Finalmente, se conecta a la instancia EC2 para ejecutar el contenedor con FastAPI y React.
 
+## ✅ TODO — Ejecutar flujo Bulk en Local (LocalStack)
+
+### Levantar servicios
+
+docker-compose up --build -d (incluye asisya_api, db, localstack, frontend).
+
+### Crear recursos en LocalStack
+
 # Frontend - Asisya Application
 
+Crear SQS (cola y DLQ), S3 bucket y cualquier IAM mínimo.
+
+Ejemplo con awslocal:
+
+```bash
+awslocal sqs create-queue --queue-name bulk-products-queue
+awslocal sqs create-queue --queue-name bulk-products-dlq
+awslocal s3 mb s3://asisya-bulk
+```
+
+### Desplegar Lambda en LocalStack
+
+Empaqueta la función (zip) o usa SAM. Ejemplo awslocal:  
+
+```bash
+awslocal lambda create-function --function-name bulk-processor \
+  --runtime python3.12 --handler handler.lambda_handler \
+  --zip-file fileb://bulk_worker.zip \
+  --role arn:aws:iam::000000000000:role/lambda-role
+```
+
+Crear mapping SQS → Lambda:
+
+```bash
+awslocal lambda create-event-source-mapping \
+  --function-name bulk-processor \
+  --batch-size 500 \
+  --event-source-arn $(awslocal sqs get-queue-attributes --queue-url http://localhost:4566/000000000000/bulk-products-queue --attribute-names QueueArn | jq -r .Attributes.QueueArn)
+```
 
 
 ## 📋 Tabla de Contenidos
@@ -626,32 +663,3 @@ npm run lint         # Ejecuta ESLint
 4. **Error Handling**: Errores se muestran en UI, pero se pueden mejorar con toast notifications
 5. **API Compatibility**: El frontend envía datos según `ProductCreateDTO` (name, sku, description, quantity_per_unit, units_in_stock, units_on_order, discontinued, price, available, category_id). Si el controlador del backend espera campos diferentes (slug, stock), puede haber un error 400. Esto requeriría ajustar el backend para que coincida con el DTO.
 
----
-
-## 🚀 Mejoras Futuras Sugeridas
-
-1. **Refresh Token**: Implementar refresh automático antes de expiración
-2. **Toast Notifications**: Librería como `react-toastify` para feedback
-3. **Loading Skeletons**: Mejor UX durante carga
-4. **Optimistic Updates**: Actualizar UI antes de confirmación del servidor
-5. **Tests**: Unit tests con Vitest, E2E con Playwright
-
----
-
-## 📞 Preguntas Frecuentes para la Entrevista
-
-**P: ¿Por qué usar Context API en lugar de Redux?**
-R: La aplicación es simple, no requiere estado global complejo. Context API es suficiente y reduce overhead.
-
-**P: ¿Cómo se maneja la expiración del token?**
-R: Actualmente, si el token expira, el interceptor detecta el 401 y redirige a login. Se puede mejorar con refresh tokens.
-
-**P: ¿Por qué React Hook Form en lugar de formularios controlados?**
-R: Mejor performance (menos re-renders), validación integrada, menos código boilerplate.
-
-**P: ¿Cómo se asegura la seguridad del token?**
-R: Se guarda en localStorage (persistencia), pero en producción se podría considerar httpOnly cookies para mayor seguridad.
-
----
-
-**Última actualización**: Diciembre 2024
